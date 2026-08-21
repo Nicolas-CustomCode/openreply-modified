@@ -34,13 +34,22 @@ export default function InvitationAcceptCard({
   }
 
   if (!isSignedIn) {
+    // Carry the invitation through the login round trip, so accepting still
+    // works for someone who has to create their account first. Registration is
+    // invite-only, and this token is what makes their email eligible.
+    const loginUrl = `/login?callbackUrl=${encodeURIComponent(`/invite/${token}`)}`;
     return (
-      <a
-        href="/login"
-        className="inline-flex items-center justify-center rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-white transition hover:bg-accent-hover"
-      >
-        Sign in to accept
-      </a>
+      <div className="space-y-3">
+        <a
+          href={loginUrl}
+          className="inline-flex items-center justify-center rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-white transition hover:bg-accent-hover"
+        >
+          Sign in or create your account
+        </a>
+        <p className="text-xs text-muted">
+          Use {invitedEmail} — the address this invitation was sent to.
+        </p>
+      </div>
     );
   }
 
@@ -56,7 +65,7 @@ export default function InvitationAcceptCard({
       </button>
       {message && <p className="text-sm text-error">{message}</p>}
       <p className="text-xs text-muted">
-        Use the magic link account for {invitedEmail}.
+        Accepting as the account for {invitedEmail}.
       </p>
     </div>
   );

@@ -1,55 +1,109 @@
-import NextAuth, { type NextAuthConfig } from "next-auth";
-import Nodemailer from "next-auth/providers/nodemailer";
-import Resend from "next-auth/providers/resend";
+import NextAuth, { type NextAuthConfig, CredentialsSignin } from "next-auth";
+import Credentials from "next-auth/providers/credentials";
+import bcrypt from "bcryptjs";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/db/client";
+import { checkIpBlocked, recordFailedAttempt, recordSuccessfulAttempt } from "@/lib/ip-blocker";
+import { getClientIp } from "@/lib/request-ip";
 import { ensureWorkspaceForUser, getPrimaryWorkspace } from "@/lib/workspace";
 
 type AdapterPrismaClient = Parameters<typeof PrismaAdapter>[0];
 
-const emailFrom = process.env.EMAIL_FROM ?? "OpenReply <login@example.com>";
-// Setting EMAIL_SERVER switches magic links to your own SMTP server, for
-// self-hosters who do not want a third-party mail service. Resend stays the
-// default, so an existing deployment is unaffected.
-const smtpServer = process.env.EMAIL_SERVER;
-
 /**
- * Provider id the login form has to sign in with. It differs per transport,
- * so it is derived here rather than hardcoded at the call site.
+ * A valid bcrypt hash of a value nobody can supply, compared against whenever no
+ * real hash is available. Returning early for an unknown email would make the
+ * response measurably faster than for a known one, which turns the login form
+ * into an oracle for which addresses have accounts.
  */
-export const EMAIL_PROVIDER_ID = smtpServer ? "nodemailer" : "resend";
+const DUMMY_PASSWORD_HASH =
+  "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+
+class AuthFailedError extends CredentialsSignin {
+  constructor(message: string) {
+    super();
+    this.code = message;
+  }
+}
 
 export const authConfig = {
   adapter: PrismaAdapter(prisma as unknown as AdapterPrismaClient),
   providers: [
-    smtpServer
-      ? Nodemailer({ server: smtpServer, from: emailFrom })
-      : Resend({
-          apiKey: process.env.RESEND_API_KEY ?? "missing-resend-api-key",
-          from: emailFrom,
-        }),
+    Credentials({
+      name: "Credentials",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Senha", type: "password" },
+      },
+      async authorize(credentials, req) {
+        const email = (credentials?.email as string)?.trim().toLowerCase();
+        const password = credentials?.password as string;
+
+        // Auth.js always hands authorize() a real Request, so the headers are
+        // the only source for the address. It is deliberately not accepted as a
+        // credential: a client-supplied IP is a client-controlled rate limit.
+        const ip = getClientIp(req.headers);
+
+        // 1. Check IP block status
+        const ipCheck = await checkIpBlocked(ip);
+        if (ipCheck.blocked) {
+          throw new AuthFailedError(ipCheck.reason || "IP bloqueado por segurança.");
+        }
+
+        if (!email || !password) {
+          await recordFailedAttempt(ip);
+          throw new AuthFailedError("Email e senha são obrigatórios.");
+        }
+
+        const user = await prisma.user.findUnique({
+          where: { email },
+        });
+
+        const isPasswordValid = await bcrypt.compare(
+          password,
+          user?.passwordHash ?? DUMMY_PASSWORD_HASH
+        );
+
+        if (!user || !user.passwordHash || !isPasswordValid) {
+          const failStatus = await recordFailedAttempt(ip);
+          throw new AuthFailedError(failStatus.reason || "Usuário ou senha incorretos.");
+        }
+
+        // Successful login: clear IP failed attempts
+        await recordSuccessfulAttempt(ip);
+        // Runs on every sign-in, not just the first one, because it also accepts
+        // any workspace invitation waiting on this address (see
+        // acceptPendingInvitationsForUser). An invite sent to an existing user
+        // takes effect the next time they log in.
+        await ensureWorkspaceForUser(user.id, user.email);
+
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          image: user.image,
+        };
+      },
+    }),
   ],
+  session: {
+    strategy: "jwt",
+  },
   callbacks: {
-    async session({ session, user }) {
-      if (session.user) {
-        session.user.id = user.id;
+    async jwt({ token, user }) {
+      if (user) {
+        token.id = user.id;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (token && session.user) {
+        session.user.id = token.id as string;
       }
       return session;
     },
   },
-  events: {
-    async createUser({ user }) {
-      if (user.id) {
-        await ensureWorkspaceForUser(user.id, user.email);
-      }
-    },
-  },
   pages: {
     signIn: "/login",
-    verifyRequest: "/verify-request",
-  },
-  session: {
-    strategy: "database",
   },
   trustHost: true,
   secret: process.env.NEXTAUTH_SECRET,
@@ -77,3 +131,4 @@ export async function getCurrentWorkspaceId(): Promise<string | null> {
   const createdWorkspace = await ensureWorkspaceForUser(userId, user?.email);
   return createdWorkspace.id;
 }
+
