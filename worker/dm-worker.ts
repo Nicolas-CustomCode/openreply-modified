@@ -3,6 +3,10 @@ import "@/lib/load-env";
 import { createDMWorker } from "@/lib/queue/dm-worker";
 import { recordWorkerHeartbeat } from "@/lib/ops/worker-health";
 import { reconcileComments } from "@/lib/polling/comment-reconciler";
+import {
+  createMaintenanceWorker,
+  registerScheduledJobs,
+} from "@/lib/queue/scheduled-jobs";
 import os from "node:os";
 
 const worker = createDMWorker();
@@ -13,6 +17,11 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_MS = Number(
   process.env.COMMENT_POLL_INTERVAL_MS ?? 5 * 60_000
 );
+// The daily maintenance jobs (token refresh, next-reel binding, follower
+// snapshots) run here by default. Set this to "false" only if you drive them
+// from an external scheduler against /api/cron/*, which would otherwise run
+// every job twice a day.
+const SCHEDULES_ENABLED = process.env.WORKER_SCHEDULES_ENABLED !== "false";
 
 console.log("[DM Worker] Started");
 
@@ -45,11 +54,24 @@ async function poll() {
 setTimeout(() => void poll(), 10_000);
 const pollTimer = setInterval(() => void poll(), POLL_INTERVAL_MS);
 
+const maintenanceWorker = SCHEDULES_ENABLED ? createMaintenanceWorker() : null;
+
+if (SCHEDULES_ENABLED) {
+  void registerScheduledJobs()
+    .then(() => console.log("[DM Worker] Scheduled jobs registered"))
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.error("[DM Worker] Failed to register scheduled jobs:", message);
+    });
+} else {
+  console.log("[DM Worker] Scheduled jobs disabled (WORKER_SCHEDULES_ENABLED)");
+}
+
 async function shutdown(signal: string) {
   console.log(`[DM Worker] ${signal} received, closing worker`);
   clearInterval(heartbeatTimer);
   clearInterval(pollTimer);
-  await worker.close();
+  await Promise.all([worker.close(), maintenanceWorker?.close()]);
   process.exit(0);
 }
 

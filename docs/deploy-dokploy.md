@@ -73,5 +73,8 @@ if you try to run migrations as part of the build (e.g. via the `vercel-build` s
 6. Repeat step 3 for a second Application — this is the worker. Use the worker's build/start commands from Gotcha #2, and the same full set of environment variables as the web app, especially `DATABASE_URL`, `REDIS_URL`, and `ENCRYPTION_KEY` (these three must match exactly between both apps, or DM sends will fail to decrypt).
 7. Deploy both apps.
 8. Check `https://your-domain/api/health` — confirms database, Redis, queue, and worker heartbeat are all healthy.
+9. Create your account. Sign-up is invite-only, so until you do this nobody can log in: run `npm run auth:set-password -- you@example.com` against the deployment (the script reads a piped password, so it works without an interactive terminal). Everyone after you joins by workspace invitation.
+
+You do not need to configure any scheduled task. Token refresh, next-reel binding, and follower snapshots run inside the worker app.
 
 From here, the Meta app setup, OAuth redirect, and webhook configuration are identical to the standard setup in `docs/setup.md`.
