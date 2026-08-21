@@ -24,7 +24,7 @@ Paste these into the App Review request, adjusted to your wording.
 
 Record on your published app, real accounts, one take, about two to three minutes. Narrate each step.
 
-1. Sign in with an email magic link.
+1. Sign in with your email and password.
 2. Go to Settings and click Connect Instagram. Show the consent screen with the permissions being granted.
 3. Create a campaign on a recent post with keyword `LINK`, a DM message, and save.
 4. On a second phone or account, comment `LINK` on that post.
@@ -35,7 +35,7 @@ Reviewers want to see the permission produce a real result for a real user. This
 
 ## Compliance positioning
 
-- The app never scrapes Instagram and never asks for a password.
+- The app never scrapes Instagram and never asks for an Instagram password. Account holders sign in to OpenReply itself with their own email and password; Instagram access is only ever granted through Meta's OAuth consent screen.
 - It only sends a reply when someone comments on the connected account's own content.
 - Tokens are encrypted at rest with AES-256-GCM.
 - Users can disconnect Instagram from Settings.

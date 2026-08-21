@@ -19,7 +19,6 @@ The web app and the worker must share the same `DATABASE_URL`, the same `REDIS_U
 
 - A Facebook account. Meta developer registration is built on it. There is no Instagram-only path.
 - An Instagram Business or Creator account. A personal account cannot be connected. Switch it in the Instagram app under Settings, Account type, if needed.
-- A [Resend](https://resend.com) account for login emails, with a verified sender domain. Login is email magic links only, so without this nobody can sign in. If you already run your own mail server, you can point `EMAIL_SERVER` at it instead and skip Resend entirely — see the [environment variables](#environment-variables) table.
 - Somewhere to host. The recommended setup, used throughout this guide, is Vercel for the web app and Railway for the worker plus Postgres and Redis. Both have free tiers that are enough to run this for a single account.
 
 ## Hosting and your domain
@@ -92,9 +91,7 @@ Copy `.env.example` to `.env` for local work, or set these in Vercel and Railway
 | `ENCRYPTION_KEY` | 32-byte hex. `openssl rand -hex 32`. Encrypts Instagram tokens. Identical across web and worker. |
 | `DATABASE_URL` | PostgreSQL connection string. Public Railway URL on Vercel; internal on the worker. |
 | `REDIS_URL` | Redis connection string. Must support blocking commands, so an HTTP-only Redis will not work with BullMQ. |
-| `RESEND_API_KEY` | Resend key. Login is email magic links only, so without this nobody can sign in. |
-| `EMAIL_FROM` | A sender on a domain you verified in Resend. The placeholder will not deliver. |
-| `EMAIL_SERVER` | Optional. An SMTP URL, for example `smtps://login%40example.com:password@mail.example.com:465`. Set it to send magic links through your own mail server instead of Resend; then `RESEND_API_KEY` is not needed. URL-encode special characters in the user and password (`@` becomes `%40`). Port 465 with `smtps://` is implicit TLS, port 587 with `smtp://` is STARTTLS. |
+| `TRUSTED_PROXY_HOPS` | How many reverse proxies sit in front of the app. The login rate limiter reads the client IP that many entries from the right of `x-forwarded-for`, because anything further left can be forged by the caller. Defaults to `1`, which is correct for Vercel and for a single nginx/Caddy/Traefik. Use `2` behind Cloudflare plus your own proxy, and `0` if nothing rewrites the header. |
 | `META_GRAPH_API_VERSION` | Graph API version, for example `v25.0`. |
 | `INSTAGRAM_APP_ID` | From the Meta app, see Step 6. |
 | `INSTAGRAM_APP_SECRET` | From the Meta app. |
@@ -270,7 +267,7 @@ ngrok http 3000
 
 If you run an AI coding assistant like Claude Code or Cursor, it can drive most of this for you. Open a clone of this repo inside your assistant and paste the prompt below. Give it your keys as it asks for them.
 
-A word of caution: the assistant will need real secrets to finish (Meta app secrets, a Resend key, database URLs). Only paste those into a tool and environment you trust, and rotate them afterward if you are unsure.
+A word of caution: the assistant will need real secrets to finish (Meta app secrets, database URLs). Only paste those into a tool and environment you trust, and rotate them afterward if you are unsure.
 
 ```
 You are helping me self-host OpenReply, an open source Instagram comment-to-DM
@@ -291,12 +288,12 @@ action only I can do:
    migration against them.
 
 3. Environment. Generate NEXTAUTH_SECRET, CRON_SECRET, ENCRYPTION_KEY, and
-   WEBHOOK_VERIFY_TOKEN for me. Ask me for my Resend API key and a verified
-   sender address, and for the three Meta secrets once I create the app. Make
-   sure ENCRYPTION_KEY is identical on the web app and the worker.
+   WEBHOOK_VERIFY_TOKEN for me. Ask me for the three Meta secrets once I create
+   the app. Make sure ENCRYPTION_KEY is identical on the web app and the worker.
 
 4. Deploy both processes and confirm /api/health returns ok with the worker
-   healthy.
+   healthy. Then have me run `npm run auth:set-password -- <my email>` so I have
+   an account to sign in with.
 
 5. Meta app. Walk me through the Meta app section of docs/setup.md one step at a
    time. This is the slow part. Tell me exactly what to click and what to paste,
@@ -320,6 +317,44 @@ Start by reading the docs, then ask me question 1.
 
 By the end, `/api/health` returns `status: ok` with `worker.healthy: true`, and a comment with your keyword from a second account produces a `SENT` row in the DM logs. If you get there, you are done.
 
+## Signing in
+
+Sign-in is email and password. Nothing about logging in depends on email
+delivery, so there is no mail service to configure.
+
+There is no public sign-up form. Create the first account from a terminal that
+has the same `DATABASE_URL` as the deployment:
+
+```bash
+npm run auth:set-password -- you@example.com
+```
+
+It prompts for the password twice without echoing it, creates the user if it does
+not exist, and puts them in a workspace. Run the same command again to reset a
+forgotten password — there is no self-service reset, by design.
+
+After that, more people join by invitation: from Settings, invite an email
+address, send them the link, and they set their own password on the invite page.
+Registration only accepts an address that has a pending invitation waiting for
+it.
+
+### If you get locked out
+
+Five wrong passwords from one IP triggers a 15-minute block, and ten a permanent
+one. Failures stop counting after 15 minutes of quiet, so an honest mistake
+clears itself. To lift a block by hand:
+
+```bash
+npm run auth:unblock-ip -- --list     # what is currently blocked
+npm run auth:unblock-ip -- 203.0.113.7
+npm run auth:unblock-ip -- --all
+```
+
+Blocks are keyed on the client IP, which is read from `x-forwarded-for`
+according to `TRUSTED_PROXY_HOPS`. Set that to match your deployment, or the
+limiter is either trivially bypassed (too high) or lumps every visitor into one
+bucket (too low).
+
 ## Letting other people use your instance
 
 Everything above is enough to run OpenReply for your own accounts, or a handful of accounts you add as testers. No App Review needed.
@@ -337,3 +372,5 @@ Meta scrutinizes automated-DM apps and often rejects the first submission, so bu
 - `.env` is gitignored. Keep it that way.
 - Rotate any secret that has been pasted anywhere it could be logged, including a chat with an AI assistant.
 - Instagram tokens are encrypted at rest with `ENCRYPTION_KEY`. Losing or changing it means every connected account has to reconnect.
+- Passwords are stored as bcrypt hashes, never in plain text. Sessions are JWTs, which means they cannot be revoked server-side before they expire — if an account is compromised, change the password and rotate `NEXTAUTH_SECRET`, which invalidates every existing session at once.
+- Set `TRUSTED_PROXY_HOPS` to the real number of proxies in front of the app. Too high and a caller can forge the IP the login limiter counts against; too low and every visitor shares one rate-limit bucket.

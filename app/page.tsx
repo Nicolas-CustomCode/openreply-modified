@@ -48,7 +48,7 @@ const flowSteps = [
 ];
 
 const features = [
-  "Email magic-link sign-in",
+  "Email and password sign-in",
   "Multiple Instagram accounts",
   "Encrypted tokens at rest",
   "Webhook + polling reconciliation",
