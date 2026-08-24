@@ -54,6 +54,11 @@ You need a few free accounts before anything works: a Meta developer app, and so
 
 The honest version: the code deploys in minutes, but the Meta app setup is the part that takes real time. Read [docs/setup.md](docs/setup.md) before you start. It is the single setup guide, covering hosting, your domain, the environment, and every Meta wrong turn so you do not have to find them yourself.
 
+### Deploy it
+
+- [On your own VPS, with git](docs/deploy-vps.md) — clone, build on the server, two systemd services behind Caddy
+- [On Dokploy](docs/deploy-dokploy.md) — managed platform, builds from the repo
+
 ### Run it locally
 
 ```bash
