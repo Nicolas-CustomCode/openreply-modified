@@ -5,7 +5,6 @@
   "scripts": {
     "dev": "node scripts/with-env.mjs next dev",
     "build": "prisma generate && next build",
-    "vercel-build": "prisma generate && prisma migrate deploy && next build",
     "start": "node scripts/with-env.mjs next start",
     "lint": "eslint",
     "db:generate": "prisma generate",
@@ -21,7 +20,6 @@
     "@next/env": "^16.2.6",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
-    "@vercel/analytics": "^2.0.1",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.76.4",
     "ioredis": "^5.10.1",
