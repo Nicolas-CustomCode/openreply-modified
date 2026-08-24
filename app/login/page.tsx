@@ -1,5 +1,8 @@
+import { redirect } from "next/navigation";
 import { getCampaignTemplate } from "@/lib/templates/campaign-templates";
 import LoginForm from "@/components/login-form";
+import { auth } from "@/lib/auth";
+import { safeCallbackUrl } from "@/lib/safe-redirect";
 
 export const metadata = {
   title: "Login - OpenReply",
@@ -19,7 +22,16 @@ export default async function LoginPage({
   const templateCallbackUrl = selectedTemplate
     ? `/campaigns/new?template=${selectedTemplate.slug}`
     : null;
-  const callbackUrl = params.callbackUrl ?? templateCallbackUrl ?? "/dashboard";
+  const callbackUrl =
+    safeCallbackUrl(params.callbackUrl) ?? templateCallbackUrl ?? "/dashboard";
+
+  // Deliberately here rather than in proxy.ts: only auth() can tell a live
+  // session from a cookie that merely exists. Doing this on cookie presence
+  // alone is what produced an infinite redirect against the dashboard layout.
+  const session = await auth();
+  if (session?.user?.id) {
+    redirect(callbackUrl);
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center px-6 bg-background text-foreground">
