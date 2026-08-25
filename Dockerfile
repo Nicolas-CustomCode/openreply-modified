@@ -16,8 +16,31 @@
 # 22.12+, and Prisma's schema engine expects glibc and OpenSSL.
 
 
-FROM node:22-bookworm-slim AS deps
+FROM node:22-bookworm-slim AS base
 WORKDIR /app
+
+# openssl is not decoration, and it has to be here rather than in the runner.
+# The slim image ships libssl3 but not the openssl package, and Prisma's
+# detection (getSSLVersion in @prisma/get-platform) looks for libssl.so through
+# distro paths and `ldconfig -p`. When it finds neither it defaults to
+# "openssl-1.1.x" — a binary target that cannot load on bookworm, which is
+# OpenSSL 3.x. That choice is made by the @prisma/engines postinstall while
+# `npm ci` runs, one stage below, so the wrong schema engine would already be
+# sitting in node_modules by the time the runner needs it. It breaks the
+# `migrate` command; the app and the worker are unaffected, because the
+# generated client queries through the WASM compiler and @prisma/adapter-pg
+# rather than a native engine.
+#
+# tini reaps zombies and passes SIGTERM through, which is what lets the worker
+# finish its in-flight job in worker.close() instead of being killed mid-send.
+# It rides along here so all three stages share one cached apt layer; the
+# 267 kB it adds to deps and builder are discarded with those stages.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl tini \
+ && rm -rf /var/lib/apt/lists/*
+
+
+FROM base AS deps
 
 COPY package.json package-lock.json ./
 
@@ -29,8 +52,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --include=dev
 
 
-FROM node:22-bookworm-slim AS builder
-WORKDIR /app
+FROM base AS builder
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -51,18 +73,11 @@ RUN npm run build \
  && chmod +x docker/entrypoint.sh
 
 
-FROM node:22-bookworm-slim AS runner
-WORKDIR /app
+FROM base AS runner
 
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000
-
-# tini reaps zombies and passes SIGTERM through, which is what lets the worker
-# finish its in-flight job in worker.close() instead of being killed mid-send.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends tini \
- && rm -rf /var/lib/apt/lists/*
 
 # The whole tree, devDependencies included. `output: "standalone"` would make
 # the web side much smaller, but its file tracing only covers the app — it
