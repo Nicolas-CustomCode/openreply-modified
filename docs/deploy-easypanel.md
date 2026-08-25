@@ -42,7 +42,9 @@ The repo's `docker-compose.yml` is **not** used here. It exists for local develo
 **+ Service → App**, then:
 
 - **Source** — GitHub (or Git), your fork, the branch you deploy.
-- **Build** — builder **Dockerfile**, path `./Dockerfile`. Leave the build command empty; the Dockerfile does everything.
+- **Build** — builder **Dockerfile**, Dockerfile path `Dockerfile`, build path `/`. Leave the build command empty; the Dockerfile does everything.
+
+  The build path is the build *context*, and it has to stay at the repo root. The Dockerfile copies `package.json`, `prisma/`, `worker/`, `app/`, `lib/` and `tsconfig.json`; point the context at a subdirectory and `COPY . .` finds none of them.
 - **Domains** — add your domain, container port **3000**, HTTPS on.
 - **Environment** — see below.
 
