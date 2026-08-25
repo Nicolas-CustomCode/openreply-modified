@@ -1,0 +1,4 @@
+# The container entrypoint is read by /bin/sh inside Linux. A CRLF checkout on
+# Windows makes the shebang line end in \r and the container exits with
+# "no such file or directory" — a message that names nothing useful.
+*.sh text eol=lf

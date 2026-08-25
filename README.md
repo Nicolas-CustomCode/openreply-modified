@@ -57,6 +57,7 @@ The honest version: the code deploys in minutes, but the Meta app setup is the p
 ### Deploy it
 
 - [On your own VPS, with git](docs/deploy-vps.md) — clone, build on the server, two systemd services behind Caddy
+- [On Easypanel](docs/deploy-easypanel.md) — one Docker image, two services on your own VPS
 - [On Dokploy](docs/deploy-dokploy.md) — managed platform, builds from the repo
 
 ### Run it locally
