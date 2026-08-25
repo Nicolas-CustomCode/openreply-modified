@@ -7,7 +7,14 @@ import {
 } from "crypto";
 import { getEncryptionKeyHex, requireEnv } from "@/lib/env";
 
-const INSTAGRAM_OAUTH_URL = "https://api.instagram.com/oauth/authorize";
+// The two halves of the flow live on different hosts, and the split is easy to
+// get wrong because they look like they belong together. Business Login sends
+// the user to www.instagram.com; api.instagram.com only serves the code-for-
+// token exchange. Pointing the authorize step at api.instagram.com does not
+// fail as an OAuth error — Instagram answers with its ordinary "Sorry, this
+// page isn't available" 404, which reads like a broken link rather than a
+// wrong endpoint.
+const INSTAGRAM_OAUTH_URL = "https://www.instagram.com/oauth/authorize";
 const INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
