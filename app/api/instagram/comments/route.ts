@@ -5,7 +5,9 @@ import {
   buildCommentList,
   mapWithConcurrency,
   MAX_COMMENTS_PER_POST,
+  MAX_POSTS_SINCE,
   MAX_REPLY_LENGTH,
+  MIN_POSTS_SINCE,
   parseCommentsQuery,
   toCommentPostItem,
   type CommentListItem,
@@ -13,9 +15,11 @@ import {
 } from "@/lib/instagram-comments";
 import {
   getRecentMediaComments,
+  getRecentUserMedia,
   getUserMedia,
   MetaApiError,
   sendCommentReply,
+  type InstagramMedia,
 } from "@/lib/meta/client";
 import { decryptToken } from "@/lib/meta/oauth";
 import {
@@ -34,6 +38,11 @@ export interface CommentsResponse {
   comments: CommentListItem[];
   /** Posts whose comments could not be read; the rest are still returned. */
   errors: { postId: string; message: string }[];
+  /**
+   * With ?since=, true when more posts were published since then than the
+   * ceiling allows, so the oldest of them were not read.
+   */
+  postsTruncated: boolean;
   /** Whether the current user may reply (owners and admins only). */
   canReply: boolean;
 }
@@ -48,6 +57,8 @@ function metaMessage(error: unknown, fallback: string): string {
  *
  *   ?instagramAccountId=…  which connected account (defaults to the newest)
  *   ?posts=10              how many recent posts to read (max 25)
+ *   ?since=<ISO date>      instead of ?posts: every post published since then
+ *                          (max 100), and never fewer than the latest 10
  *   ?hours=48              only comments from the last N hours (max 168)
  *   ?unanswered=true       leave out comments the account already replied to
  */
@@ -85,7 +96,19 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const media = await getUserMedia(accessToken, query.posts);
+    let media: InstagramMedia[];
+    let postsTruncated = false;
+    if (query.sinceMs !== null) {
+      const recent = await getRecentUserMedia(accessToken, {
+        sinceMs: query.sinceMs,
+        min: MIN_POSTS_SINCE,
+        max: MAX_POSTS_SINCE,
+      });
+      media = recent.media;
+      postsTruncated = recent.truncated;
+    } else {
+      media = await getUserMedia(accessToken, query.posts);
+    }
     const sinceMs = Date.now() - query.hours * 60 * 60 * 1000;
     const errors: CommentsResponse["errors"] = [];
 
@@ -122,10 +145,13 @@ export async function GET(request: NextRequest) {
         instagramId: account.instagramId,
       },
       posts: media.map(toCommentPostItem),
-      comments: buildCommentList(account.instagramId, perPost, {
-        unanswered: query.unanswered,
-      }),
+      comments: buildCommentList(
+        { instagramId: account.instagramId, username: account.username },
+        perPost,
+        { unanswered: query.unanswered }
+      ),
       errors,
+      postsTruncated,
       canReply: canManageWorkspace(context.role),
     };
     return NextResponse.json({ success: true, data });

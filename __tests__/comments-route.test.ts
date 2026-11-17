@@ -6,6 +6,7 @@ const { mockContext, mockAccounts, mockMeta, mockOauth } = vi.hoisted(() => ({
   mockAccounts: { getWorkspaceInstagramAccount: vi.fn() },
   mockMeta: {
     getUserMedia: vi.fn(),
+    getRecentUserMedia: vi.fn(),
     getRecentMediaComments: vi.fn(),
     sendCommentReply: vi.fn(),
   },
@@ -107,6 +108,37 @@ describe("GET /api/instagram/comments", () => {
       { postId: "m3", message: "slow down" },
     ]);
     expect(body.data.canReply).toBe(true);
+  });
+
+  it("with ?since reads every post published since then", async () => {
+    mockMeta.getRecentUserMedia.mockResolvedValue({
+      media: [
+        { id: "m1", media_type: "IMAGE", timestamp: "2026-11-17T08:00:00+0000", comments_count: 1 },
+      ],
+      truncated: true,
+    });
+    mockMeta.getRecentMediaComments.mockResolvedValue([
+      {
+        id: "c1",
+        text: "hi",
+        timestamp: "2026-11-17T09:00:00+0000",
+        from: { id: "fan", username: "fan" },
+        // No `from` on the reply, as Meta returns it: matched by username.
+        replies: { data: [{ id: "r1", text: "thanks", username: "brand" }] },
+      },
+    ]);
+
+    const since = "2026-11-16T12:00:00.000Z";
+    const body = await (await GET(get(`?since=${since}&posts=3`))).json();
+
+    expect(mockMeta.getUserMedia).not.toHaveBeenCalled();
+    expect(mockMeta.getRecentUserMedia).toHaveBeenCalledWith("token", {
+      sinceMs: Date.parse(since),
+      min: 10,
+      max: 100,
+    });
+    expect(body.data.postsTruncated).toBe(true);
+    expect(body.data.comments[0]).toMatchObject({ id: "c1", answered: true });
   });
 
   it("lets a member read but tells the page they cannot reply", async () => {

@@ -91,9 +91,14 @@ export default function CommentsPage() {
       if (!selectedAccountId) return;
       if (!silent) setLoading(true);
       try {
+        // The window covers posts too: every post published inside it is read
+        // (the API keeps the latest few from before it as well), so an account
+        // that posts many times a day still gets its whole day.
+        const since = new Date(Date.now() - hours * 60 * 60 * 1000);
         const qs = new URLSearchParams({
           instagramAccountId: selectedAccountId,
           hours: String(hours),
+          since: since.toISOString(),
           unanswered: String(unansweredOnly),
         });
         const res = await fetch(`/api/instagram/comments?${qs}`, {
@@ -290,6 +295,13 @@ export default function CommentsPage() {
       {data && !data.canReply && (
         <p className="text-xs text-muted">
           Only workspace owners and admins can reply to comments.
+        </p>
+      )}
+
+      {data?.postsTruncated && (
+        <p className="text-xs text-warning">
+          More posts were published in this window than can be read at once;
+          showing comments on the latest {data.posts.length}.
         </p>
       )}
 

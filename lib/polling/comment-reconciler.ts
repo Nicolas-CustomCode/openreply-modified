@@ -34,6 +34,7 @@ import {
   type InstagramComment,
 } from "@/lib/meta/client";
 import { decryptToken } from "@/lib/meta/oauth";
+import { isOwnReply } from "@/lib/instagram-comments";
 import { matchKeywords } from "@/lib/utils/keyword-matcher";
 
 // Only consider comments from the last few days — older ones are outside
@@ -189,8 +190,10 @@ async function sweepCampaign(
       if (!matched) return false;
       stat.matched += 1;
 
-      const ownerReplied = (c.replies?.data ?? []).some(
-        (r) => r.from?.id === account.instagramId
+      // Same test as the comments page, by id or by username, because Meta
+      // can return replies without `from`.
+      const ownerReplied = (c.replies?.data ?? []).some((r) =>
+        isOwnReply(r, account)
       );
       if (ownerReplied) {
         stat.alreadyReplied += 1;

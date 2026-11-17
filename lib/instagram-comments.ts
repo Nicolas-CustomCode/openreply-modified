@@ -7,13 +7,24 @@
  * fetching and hands the raw Graph API data to these functions.
  */
 
-import type { InstagramComment, InstagramMedia } from "@/lib/meta/client";
+import type {
+  InstagramComment,
+  InstagramCommentReply,
+  InstagramMedia,
+} from "@/lib/meta/client";
 
 // Every listed post costs at least one comments call on the account's token,
 // the same token the worker and the polling reconciler send with. These caps
 // keep one page load from eating the budget the automation depends on.
 export const DEFAULT_POSTS = 10;
 export const MAX_POSTS = 25;
+// With ?since=, every post published since then is read, up to this ceiling.
+// An account posting dozens of times a day needs more than MAX_POSTS to cover
+// one day.
+export const MAX_POSTS_SINCE = 100;
+// With ?since=, the newest posts always included even when published before
+// it: a post from just before the window can still be collecting comments.
+export const MIN_POSTS_SINCE = 10;
 export const DEFAULT_HOURS = 48;
 export const MAX_HOURS = 168;
 // Per post. A viral post can carry thousands of comments; only the newest are
@@ -28,6 +39,45 @@ export interface CommentsQuery {
   posts: number;
   hours: number;
   unanswered: boolean;
+  /**
+   * Epoch ms from ?since= (an ISO date). When set, the posts read are those
+   * published since then instead of the latest `posts`. Null when absent or
+   * not a valid date.
+   */
+  sinceMs: number | null;
+}
+
+/** The connected account, as far as telling its own replies apart goes. */
+export interface CommentAccount {
+  instagramId: string;
+  username: string;
+}
+
+function normalizeUsername(value: string): string {
+  return value.trim().replace(/^@/, "").toLowerCase();
+}
+
+/**
+ * Whether a reply was written by the connected account.
+ *
+ * Meta can return replies without `from`, so a reply also counts when its
+ * `username` is the account's. The stored username is the one from the last
+ * connect; an account that renames itself on Instagram is matched by name again
+ * after it reconnects. Shared by the comments page and the polling reconciler
+ * so the two never disagree on "already answered".
+ */
+export function isOwnReply(
+  reply: Pick<InstagramCommentReply, "from" | "username">,
+  account: CommentAccount
+): boolean {
+  if (reply.from?.id && reply.from.id === account.instagramId) return true;
+
+  const name = reply.username ?? reply.from?.username;
+  return Boolean(
+    name &&
+      account.username &&
+      normalizeUsername(name) === normalizeUsername(account.username)
+  );
 }
 
 export interface CommentPostItem {
@@ -70,17 +120,29 @@ function readInt(
   return Math.min(max, Math.max(1, Math.floor(value)));
 }
 
+function readSince(raw: string | null, now: number): number | null {
+  if (!raw || raw.trim() === "") return null;
+  const value = Date.parse(raw);
+  if (Number.isNaN(value)) return null;
+  // A future date would select nothing; treat it as "now".
+  return Math.min(value, now);
+}
+
 /**
- * Read ?posts, ?hours and ?unanswered. Bad values fall back to the default and
- * out-of-range values are clamped, rather than rejected, because the only
- * caller is our own page and a clamp is never harmful.
+ * Read ?posts, ?hours, ?unanswered and ?since. Bad values fall back to the
+ * default and out-of-range values are clamped, rather than rejected, because
+ * the only caller is our own page and a clamp is never harmful.
  */
-export function parseCommentsQuery(params: URLSearchParams): CommentsQuery {
+export function parseCommentsQuery(
+  params: URLSearchParams,
+  now = Date.now()
+): CommentsQuery {
   const unanswered = params.get("unanswered");
   return {
     posts: readInt(params.get("posts"), DEFAULT_POSTS, MAX_POSTS),
     hours: readInt(params.get("hours"), DEFAULT_HOURS, MAX_HOURS),
     unanswered: unanswered === "true" || unanswered === "1",
+    sinceMs: readSince(params.get("since"), now),
   };
 }
 
@@ -106,12 +168,11 @@ function timeOf(iso: string | null | undefined): number {
  *
  * The account's own top-level comments are left out: they are not something to
  * reply to. A comment is `answered` when any of its replies comes from the
- * account — the same test the polling reconciler uses to decide a comment is
- * already handled, so the page and the automation agree on what "answered"
- * means.
+ * account, as decided by isOwnReply — the same test the polling reconciler
+ * uses, so the page and the automation agree on what "answered" means.
  */
 export function buildCommentList(
-  accountInstagramId: string,
+  account: CommentAccount,
   perPost: { postId: string; comments: InstagramComment[] }[],
   options: { unanswered: boolean }
 ): CommentListItem[] {
@@ -120,14 +181,14 @@ export function buildCommentList(
   for (const { postId, comments } of perPost) {
     for (const comment of comments) {
       const userId = comment.from?.id;
-      if (!userId || userId === accountInstagramId) continue;
+      if (!userId || userId === account.instagramId) continue;
 
       const replies: CommentReplyItem[] = (comment.replies?.data ?? [])
         .map((reply) => ({
           id: reply.id,
           text: reply.text ?? "",
-          username: reply.from?.username ?? null,
-          fromMe: reply.from?.id === accountInstagramId,
+          username: reply.username ?? reply.from?.username ?? null,
+          fromMe: isOwnReply(reply, account),
           timestamp: reply.timestamp ?? null,
         }))
         .sort((a, b) => timeOf(a.timestamp) - timeOf(b.timestamp));

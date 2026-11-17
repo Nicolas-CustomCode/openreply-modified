@@ -72,9 +72,9 @@ export interface InstagramComment {
     username?: string;
   };
   timestamp: string;
-  // Present when the comments query asks for replies. `from` tells whether the
-  // account owner has already replied to this comment; `text` and `timestamp`
-  // let the comments page show the thread.
+  // Present when the comments query asks for replies. Used to tell whether the
+  // account owner has already replied to this comment (see isOwnReply), and by
+  // the comments page to show the thread.
   replies?: {
     data?: InstagramCommentReply[];
   };
@@ -84,6 +84,9 @@ export interface InstagramCommentReply {
   id: string;
   text?: string;
   timestamp?: string;
+  // Replies can come back without `from`, so the author's `username` is asked
+  // for too and is what identifies the account's own replies in that case.
+  username?: string;
   from?: { id: string; username?: string };
 }
 
@@ -466,7 +469,7 @@ export async function getRecentMediaComments(
   const first = new URL(`${instagramGraphBase()}/${mediaId}/comments`);
   first.searchParams.set(
     "fields",
-    "id,text,timestamp,from,replies{id,text,timestamp,from}"
+    "id,text,timestamp,from,replies{id,text,timestamp,username,from}"
   );
   first.searchParams.set("order", "reverse_chronological");
   first.searchParams.set("limit", "50");
@@ -589,6 +592,57 @@ export async function getUserMedia(
   const response = await fetch(url.toString());
   const data = await handleResponse<{ data: InstagramMedia[] }>(response);
   return data.data;
+}
+
+/**
+ * Recent media, newest first: every post published at or after `sinceMs`, and
+ * never fewer than the `min` most recent ones (a post from just before the
+ * window can still be collecting comments inside it). Pagination stops as soon
+ * as both are satisfied, or at the `max` ceiling. `truncated` says the ceiling
+ * cut the list short of `sinceMs`.
+ */
+export async function getRecentUserMedia(
+  accessToken: string,
+  options: { sinceMs: number; min: number; max: number }
+): Promise<{ media: InstagramMedia[]; truncated: boolean }> {
+  const { sinceMs, min, max } = options;
+  const results: InstagramMedia[] = [];
+
+  const first = new URL(`${instagramGraphBase()}/me/media`);
+  first.searchParams.set("fields", MEDIA_FIELDS);
+  first.searchParams.set("limit", String(Math.min(50, max)));
+  first.searchParams.set("access_token", accessToken);
+
+  let nextUrl: string | null = first.toString();
+  let reachedWindowStart = false;
+
+  while (nextUrl !== null && results.length < max) {
+    const response: Response = await fetch(nextUrl);
+    const page = await handleResponse<{
+      data: InstagramMedia[];
+      paging?: { next?: string };
+    }>(response);
+    const data = page.data ?? [];
+    results.push(...data);
+
+    const oldest = data[data.length - 1];
+    if (!oldest || Date.parse(oldest.timestamp) < sinceMs) {
+      reachedWindowStart = true;
+    }
+    if (reachedWindowStart && results.length >= min) break;
+    nextUrl = page.paging?.next ?? null;
+  }
+
+  // Keep the window, topped up to `min` with the newest posts before it.
+  const inWindow = results.filter((m) => Date.parse(m.timestamp) >= sinceMs);
+  const kept = results.slice(0, Math.max(inWindow.length, min)).slice(0, max);
+  // Cut short when the ceiling dropped posts from inside the window, or when
+  // the loop stopped at the ceiling with pages still left before the window
+  // start was reached.
+  const truncated =
+    inWindow.length > max || (!reachedWindowStart && nextUrl !== null);
+
+  return { media: kept, truncated };
 }
 
 /**

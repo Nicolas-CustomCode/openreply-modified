@@ -3,6 +3,7 @@ import {
   buildCommentList,
   DEFAULT_HOURS,
   DEFAULT_POSTS,
+  isOwnReply,
   mapWithConcurrency,
   MAX_HOURS,
   MAX_POSTS,
@@ -10,7 +11,8 @@ import {
 } from "@/lib/instagram-comments";
 import type { InstagramComment } from "@/lib/meta/client";
 
-const ACCOUNT = "17841400000000001";
+const ACCOUNT_ID = "17841400000000001";
+const ACCOUNT = { instagramId: ACCOUNT_ID, username: "brand" };
 
 function comment(
   id: string,
@@ -32,6 +34,7 @@ describe("parseCommentsQuery", () => {
       posts: DEFAULT_POSTS,
       hours: DEFAULT_HOURS,
       unanswered: false,
+      sinceMs: null,
     });
   });
 
@@ -40,7 +43,25 @@ describe("parseCommentsQuery", () => {
       parseCommentsQuery(
         new URLSearchParams("posts=5&hours=24&unanswered=true")
       )
-    ).toEqual({ posts: 5, hours: 24, unanswered: true });
+    ).toEqual({ posts: 5, hours: 24, unanswered: true, sinceMs: null });
+  });
+
+  it("reads ?since as a date, ignores junk and caps it at now", () => {
+    const now = Date.parse("2026-11-17T12:00:00Z");
+
+    expect(
+      parseCommentsQuery(
+        new URLSearchParams("since=2026-11-16T12:00:00.000Z"),
+        now
+      ).sinceMs
+    ).toBe(Date.parse("2026-11-16T12:00:00Z"));
+    expect(
+      parseCommentsQuery(new URLSearchParams("since=yesterday"), now).sinceMs
+    ).toBeNull();
+    expect(
+      parseCommentsQuery(new URLSearchParams("since=2030-01-01T00:00:00Z"), now)
+        .sinceMs
+    ).toBe(now);
   });
 
   it("clamps out-of-range values and ignores junk", () => {
@@ -62,7 +83,58 @@ describe("parseCommentsQuery", () => {
   });
 });
 
+describe("isOwnReply", () => {
+  it("matches the account by id", () => {
+    expect(isOwnReply({ from: { id: ACCOUNT_ID } }, ACCOUNT)).toBe(true);
+  });
+
+  it("matches by username when Meta leaves out `from`", () => {
+    expect(isOwnReply({ username: "brand" }, ACCOUNT)).toBe(true);
+    expect(isOwnReply({ username: "@Brand " }, ACCOUNT)).toBe(true);
+  });
+
+  it("does not match someone else", () => {
+    expect(isOwnReply({ username: "fan" }, ACCOUNT)).toBe(false);
+    expect(
+      isOwnReply({ from: { id: "other", username: "fan" } }, ACCOUNT)
+    ).toBe(false);
+    expect(isOwnReply({}, ACCOUNT)).toBe(false);
+  });
+
+  it("never matches an empty username on either side", () => {
+    expect(isOwnReply({ username: "" }, { ...ACCOUNT, username: "" })).toBe(
+      false
+    );
+  });
+});
+
 describe("buildCommentList", () => {
+  it("marks a comment answered from the reply's username alone", () => {
+    // What Meta was seen to return: replies with no `from` at all.
+    const list = buildCommentList(
+      ACCOUNT,
+      [
+        {
+          postId: "p1",
+          comments: [
+            comment("1", "2026-11-17T10:00:00+0000", {
+              replies: {
+                data: [{ id: "r1", text: "thanks!", username: "brand" }],
+              },
+            }),
+          ],
+        },
+      ],
+      { unanswered: false }
+    );
+
+    expect(list[0].answered).toBe(true);
+    expect(list[0].replies[0]).toMatchObject({
+      username: "brand",
+      fromMe: true,
+    });
+  });
+
   it("marks a comment answered only when the account replied", () => {
     const list = buildCommentList(
       ACCOUNT,
@@ -77,7 +149,7 @@ describe("buildCommentList", () => {
                     id: "r1",
                     text: "thanks!",
                     timestamp: "2026-11-17T10:05:00+0000",
-                    from: { id: ACCOUNT, username: "brand" },
+                    from: { id: ACCOUNT_ID, username: "brand" },
                   },
                 ],
               },
@@ -118,7 +190,7 @@ describe("buildCommentList", () => {
           postId: "p1",
           comments: [
             comment("1", "2026-11-17T10:00:00+0000", {
-              replies: { data: [{ id: "r1", from: { id: ACCOUNT } }] },
+              replies: { data: [{ id: "r1", from: { id: ACCOUNT_ID } }] },
             }),
             comment("2", "2026-11-17T09:00:00+0000"),
           ],
@@ -138,7 +210,7 @@ describe("buildCommentList", () => {
           postId: "p1",
           comments: [
             comment("1", "2026-11-17T10:00:00+0000", {
-              from: { id: ACCOUNT, username: "brand" },
+              from: { id: ACCOUNT_ID, username: "brand" },
             }),
             comment("2", "2026-11-17T09:00:00+0000", { from: undefined }),
             comment("3", "2026-11-17T08:00:00+0000"),
