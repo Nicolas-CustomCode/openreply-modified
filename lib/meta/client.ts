@@ -72,11 +72,19 @@ export interface InstagramComment {
     username?: string;
   };
   timestamp: string;
-  // Present when the comments query asks for replies{from}. Used to tell whether
-  // the account owner has already replied to this comment.
+  // Present when the comments query asks for replies. `from` tells whether the
+  // account owner has already replied to this comment; `text` and `timestamp`
+  // let the comments page show the thread.
   replies?: {
-    data?: { id: string; from?: { id: string; username?: string } }[];
+    data?: InstagramCommentReply[];
   };
+}
+
+export interface InstagramCommentReply {
+  id: string;
+  text?: string;
+  timestamp?: string;
+  from?: { id: string; username?: string };
 }
 
 export interface InstagramMedia {
@@ -441,7 +449,7 @@ export async function getMediaComments(
  * can tell whether the account owner has already responded. Pagination stops as
  * soon as it reaches comments older than `sinceMs` (or the `max` ceiling), so a
  * viral post's entire back-catalogue is never pulled — only what is recent
- * enough to still act on. This is what the polling reconciler reads.
+ * enough to still act on. The polling reconciler and the comments page read it.
  *
  * Note: comments hidden by Instagram's Hidden Words / spam filter may not be
  * returned by the Graph API at all. Disable that filter on the account to widen
@@ -456,7 +464,10 @@ export async function getRecentMediaComments(
   const results: InstagramComment[] = [];
 
   const first = new URL(`${instagramGraphBase()}/${mediaId}/comments`);
-  first.searchParams.set("fields", "id,text,timestamp,from,replies{from}");
+  first.searchParams.set(
+    "fields",
+    "id,text,timestamp,from,replies{id,text,timestamp,from}"
+  );
   first.searchParams.set("order", "reverse_chronological");
   first.searchParams.set("limit", "50");
   first.searchParams.set("access_token", accessToken);
