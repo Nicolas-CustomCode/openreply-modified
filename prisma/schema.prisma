@@ -147,6 +147,7 @@ model InstagramAccount {
   dmLogs      DmLog[]
   linkClicks  LinkClick[]
   followerSnapshots FollowerSnapshot[]
+  replyAuthors      CommentReplyAuthor[]
 
   @@index([workspaceId])
 }
@@ -271,6 +272,25 @@ model ProcessedComment {
   commentId          String   @unique
   source             String // "WEBHOOK" | "POLLING"
   seenAt             DateTime @default(now())
+
+  @@index([instagramAccountId])
+}
+
+/// Who wrote a comment reply: the connected account or someone else.
+///
+/// Meta returns a comment's replies without their author when they are read
+/// in bulk (nested under the comment, or from /{comment-id}/replies); only a
+/// read of the reply itself, GET /{reply-id}, says who wrote it. That costs a
+/// call per reply, and a reply's author never changes, so each answer is kept
+/// here and a reply is looked up at most once. Replies OpenReply posts itself
+/// are recorded as the account's the moment they are sent, with no lookup.
+model CommentReplyAuthor {
+  replyId            String   @id
+  instagramAccountId String
+  fromAccount        Boolean
+  createdAt          DateTime @default(now())
+
+  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
 
   @@index([instagramAccountId])
 }

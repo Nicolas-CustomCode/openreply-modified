@@ -34,7 +34,7 @@ import {
   type InstagramComment,
 } from "@/lib/meta/client";
 import { decryptToken } from "@/lib/meta/oauth";
-import { isOwnReply } from "@/lib/instagram-comments";
+import { commentIsAnswered, resolveAnsweredComments } from "@/lib/reply-authors";
 import { matchKeywords } from "@/lib/utils/keyword-matcher";
 
 // Only consider comments from the last few days — older ones are outside
@@ -43,6 +43,12 @@ const LOOKBACK_HOURS = Number(process.env.COMMENT_POLL_LOOKBACK_HOURS ?? 72);
 // Hard cap on how many new comments a single campaign can enqueue per sweep, so
 // a viral post drains gradually instead of bursting into the comment API.
 const MAX_NEW_PER_SWEEP = Number(process.env.COMMENT_POLL_MAX_PER_SWEEP ?? 30);
+// GET /{reply-id} calls one whole pass (all campaigns) may spend finding out
+// who wrote replies. Answers are cached for good, so this only bites while the
+// cache fills; comments it could not settle wait for the next pass.
+const REPLY_LOOKUPS_PER_PASS = Number(
+  process.env.COMMENT_POLL_REPLY_LOOKUPS ?? 30
+);
 // For "any post" campaigns, how many recent posts to scan.
 const RECENT_MEDIA_LIMIT = 10;
 
@@ -51,6 +57,8 @@ interface SweepStat {
   keywords: string;
   matched: number;
   alreadyReplied: number;
+  /** Matched comments left for a later pass because their replies' authors are not known yet. */
+  unverified: number;
   enqueued: number;
   errors: string[];
 }
@@ -88,14 +96,21 @@ export async function reconcileComments(): Promise<void> {
 
   const sinceMs = Date.now() - LOOKBACK_HOURS * 60 * 60 * 1000;
   const tokenCache = new Map<string, string | null>();
+  const lookupBudget = { remaining: REPLY_LOOKUPS_PER_PASS };
 
   for (const automation of automations) {
-    const stat = await sweepCampaign(automation, sinceMs, tokenCache).catch(
+    const stat = await sweepCampaign(
+      automation,
+      sinceMs,
+      tokenCache,
+      lookupBudget
+    ).catch(
       (error): SweepStat => ({
         campaign: automation.name,
         keywords: automation.keywords.join(","),
         matched: 0,
         alreadyReplied: 0,
+        unverified: 0,
         enqueued: 0,
         errors: [errMessage(error)],
       })
@@ -122,7 +137,8 @@ async function sweepCampaign(
     };
   },
   sinceMs: number,
-  tokenCache: Map<string, string | null>
+  tokenCache: Map<string, string | null>,
+  lookupBudget: { remaining: number }
 ): Promise<SweepStat> {
   const account = automation.instagramAccount;
   const stat: SweepStat = {
@@ -132,6 +148,7 @@ async function sweepCampaign(
       : automation.keywords.join(","),
     matched: 0,
     alreadyReplied: 0,
+    unverified: 0,
     enqueued: 0,
     errors: [],
   };
@@ -177,42 +194,31 @@ async function sweepCampaign(
       continue;
     }
 
-    // Keep only comments that (a) aren't the account's own, (b) match the
-    // keyword, and (c) have no reply from the account owner yet.
-    const needsAction = comments.filter((c) => {
+    // Keep only comments that aren't the account's own and match the keyword.
+    const matched = comments.filter((c) => {
       const authorId = c.from?.id;
       if (!authorId || authorId === account.instagramId) return false;
 
-      const matched = automation.matchAnyWord
+      const hit = automation.matchAnyWord
         ? true
         : matchKeywords(c.text ?? "", automation.keywords, automation.wholeWordMatch)
             .matched;
-      if (!matched) return false;
-      stat.matched += 1;
-
-      // Same test as the comments page, by id or by username, because Meta
-      // can return replies without `from`.
-      const ownerReplied = (c.replies?.data ?? []).some((r) =>
-        isOwnReply(r, account)
-      );
-      if (ownerReplied) {
-        stat.alreadyReplied += 1;
-        return false;
-      }
-      return true;
+      if (hit) stat.matched += 1;
+      return hit;
     });
-    if (needsAction.length === 0) continue;
+    if (matched.length === 0) continue;
 
-    // Second guard against races: skip comments this campaign has already fully
-    // handled. "Fully handled" depends on the campaign: if it posts a public
-    // reply, the completion signal is publicReplySentAt (a DM alone is not
-    // enough — the reply still has to land); otherwise a SENT DM is enough. This
-    // is what lets a comment whose DM sent but whose public reply failed come
-    // back and retry the reply.
+    // Skip comments this campaign has already fully handled. "Fully handled"
+    // depends on the campaign: if it posts a public reply, the completion signal
+    // is publicReplySentAt (a DM alone is not enough — the reply still has to
+    // land); otherwise a SENT DM is enough. This is what lets a comment whose DM
+    // sent but whose public reply failed come back and retry the reply. Checked
+    // before the reply-author lookups below, so those are never spent on a
+    // comment that is done anyway.
     const handled = await prisma.dmLog.findMany({
       where: {
         automationId: automation.id,
-        commentId: { in: needsAction.map((c) => c.id) },
+        commentId: { in: matched.map((c) => c.id) },
         ...(automation.publicReplyEnabled
           ? { publicReplySentAt: { not: null } }
           : { status: "SENT" }),
@@ -221,17 +227,47 @@ async function sweepCampaign(
     });
     const handledSet = new Set(handled.map((h) => h.commentId));
 
-    // Oldest first, so whoever commented earliest gets answered first, capped.
-    const fresh = needsAction
+    // Oldest first, so whoever commented earliest gets answered first.
+    const candidates = matched
       .filter((c) => !handledSet.has(c.id))
-      .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+      .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+    if (candidates.length === 0) continue;
+
+    // Leave out comments the account owner already answered — by hand or
+    // through OpenReply. Meta sends replies without authors, so this goes
+    // through the shared reply-author cache and spends lookups from the sweep's
+    // budget. A comment it cannot settle yet is left for a later sweep rather
+    // than DM'd blind.
+    const resolution = await resolveAnsweredComments(
+      account,
+      accessToken,
+      candidates,
+      { budget: lookupBudget.remaining }
+    );
+    lookupBudget.remaining = Math.max(
+      0,
+      lookupBudget.remaining - resolution.lookups
+    );
+
+    const fresh = candidates
+      .filter((c) => {
+        if (commentIsAnswered(c, account, resolution)) {
+          stat.alreadyReplied += 1;
+          return false;
+        }
+        if (resolution.unverifiedCommentIds.has(c.id)) {
+          stat.unverified += 1;
+          return false;
+        }
+        return true;
+      })
       .slice(0, MAX_NEW_PER_SWEEP);
 
     for (const c of fresh) {
       // No deterministic jobId here: a retained completed/failed job from an
       // earlier sweep would otherwise be treated as a duplicate and silently
       // drop this add, so the comment would never be retried. Dedup is handled
-      // above (owner-reply + DmLog guards) and the worker is idempotent
+      // above (DmLog + owner-reply guards) and the worker is idempotent
       // (publicReplySentAt / SENT), so re-processing a comment is safe.
       await queue.add("process-comment", {
         instagramAccountId: account.instagramId,
@@ -262,7 +298,7 @@ async function recordSweep(
         workspaceId,
         source: "SYSTEM",
         level: stat.errors.length > 0 ? "WARNING" : "INFO",
-        message: `Comment sweep "${stat.campaign}" [${stat.keywords}]: ${stat.enqueued} enqueued, ${stat.matched} matched, ${stat.alreadyReplied} already replied`,
+        message: `Comment sweep "${stat.campaign}" [${stat.keywords}]: ${stat.enqueued} enqueued, ${stat.matched} matched, ${stat.alreadyReplied} already replied${stat.unverified > 0 ? `, ${stat.unverified} awaiting reply-author check` : ""}`,
         payload: { ...stat },
       },
     })

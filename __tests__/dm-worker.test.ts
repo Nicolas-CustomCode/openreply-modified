@@ -88,6 +88,10 @@ vi.mock("@/lib/meta/oauth", () => ({
   decryptToken: mockDecryptToken,
 }));
 
+vi.mock("@/lib/reply-authors", () => ({
+  recordOwnReply: vi.fn(),
+}));
+
 vi.mock("@/lib/utils/keyword-matcher", () => ({
   matchKeywords: mockMatchKeywords,
 }));

@@ -186,11 +186,16 @@ export default function CommentsPage() {
         prev
           ? {
               ...prev,
+              verificationPending: Math.max(
+                0,
+                (prev.verificationPending ?? 0) - (comment.verifying ? 1 : 0)
+              ),
               comments: prev.comments.map((c) =>
                 c.id === comment.id
                   ? {
                       ...c,
                       answered: true,
+                      verifying: false,
                       replies: [
                         ...c.replies,
                         {
@@ -298,6 +303,15 @@ export default function CommentsPage() {
         </p>
       )}
 
+      {data && data.verificationPending > 0 && (
+        <p className="text-xs text-muted">
+          Still checking who replied on {data.verificationPending} comment
+          {data.verificationPending === 1 ? "" : "s"}. Instagram only names a
+          reply&apos;s author one reply at a time, so this settles over the next
+          few refreshes.
+        </p>
+      )}
+
       {data?.postsTruncated && (
         <p className="text-xs text-warning">
           More posts were published in this window than can be read at once;
@@ -362,6 +376,11 @@ export default function CommentsPage() {
                           Answered
                         </span>
                       )}
+                      {comment.verifying && (
+                        <span className="text-[11px] font-medium text-muted">
+                          Checking…
+                        </span>
+                      )}
                     </div>
                     <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-foreground">
                       {comment.text || "(no text)"}
@@ -396,9 +415,13 @@ export default function CommentsPage() {
                                 reply.fromMe ? "text-accent" : ""
                               }`}
                             >
+                              {/* Meta sends replies without authors, so most
+                                  have no username to show. */}
                               {reply.fromMe
                                 ? "You"
-                                : `@${reply.username ?? "unknown"}`}
+                                : reply.username
+                                  ? `@${reply.username}`
+                                  : "Reply"}
                             </span>{" "}
                             {reply.text}
                           </p>

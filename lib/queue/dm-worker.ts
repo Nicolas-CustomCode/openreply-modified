@@ -26,6 +26,7 @@ import {
   sendPrivateReplyWithLinkButton,
 } from "@/lib/meta/client";
 import { decryptToken } from "@/lib/meta/oauth";
+import { recordOwnReply } from "@/lib/reply-authors";
 import { matchKeywords } from "@/lib/utils/keyword-matcher";
 import { reserveDMSlot } from "@/lib/utils/rate-limiter";
 import {
@@ -370,7 +371,10 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           commenterName,
           trackedLinks: automation.trackedLinks,
         });
-        await sendCommentReply(accessToken, commentId, publicReply);
+        const posted = await sendCommentReply(accessToken, commentId, publicReply);
+        // Meta sends replies back without authors, so this is the only point
+        // where it is known for free that the reply is the account's.
+        await recordOwnReply(automation.instagramAccountId, posted?.id);
         await prisma.dmLog.update({
           where: {
             automationId_commentId: { automationId: automation.id, commentId },

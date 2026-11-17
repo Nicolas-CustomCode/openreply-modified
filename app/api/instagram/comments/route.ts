@@ -9,6 +9,7 @@ import {
   MAX_REPLY_LENGTH,
   MIN_POSTS_SINCE,
   parseCommentsQuery,
+  REPLY_LOOKUPS_PER_LOAD,
   toCommentPostItem,
   type CommentListItem,
   type CommentPostItem,
@@ -22,6 +23,7 @@ import {
   type InstagramMedia,
 } from "@/lib/meta/client";
 import { decryptToken } from "@/lib/meta/oauth";
+import { recordOwnReply, resolveAnsweredComments } from "@/lib/reply-authors";
 import {
   canManageWorkspace,
   getCurrentWorkspaceContext,
@@ -43,6 +45,11 @@ export interface CommentsResponse {
    * ceiling allows, so the oldest of them were not read.
    */
   postsTruncated: boolean;
+  /**
+   * Comments whose replies' authors are still being looked up, so "answered"
+   * is not settled for them yet. A later load settles them.
+   */
+  verificationPending: number;
   /** Whether the current user may reply (owners and admins only). */
   canReply: boolean;
 }
@@ -138,6 +145,32 @@ export async function GET(request: NextRequest) {
       }
     );
 
+    // Meta sends replies without authors, so who answered what is looked up
+    // reply by reply (cached, budgeted). Newest comments first: they are the
+    // ones the page shows at the top. The account's own comments are skipped,
+    // since they are never listed.
+    const replyAccount = {
+      id: account.id,
+      instagramId: account.instagramId,
+      username: account.username,
+    };
+    const toResolve = perPost
+      .flatMap((p) => p.comments)
+      .filter((c) => c.from?.id && c.from.id !== account.instagramId)
+      .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+    const resolution = await resolveAnsweredComments(
+      replyAccount,
+      accessToken,
+      toResolve,
+      { budget: REPLY_LOOKUPS_PER_LOAD }
+    );
+
+    const comments = buildCommentList(replyAccount, perPost, {
+      unanswered: query.unanswered,
+      ownReplyIds: resolution.ownReplyIds,
+      unverifiedCommentIds: resolution.unverifiedCommentIds,
+    });
+
     const data: CommentsResponse = {
       account: {
         id: account.id,
@@ -145,13 +178,10 @@ export async function GET(request: NextRequest) {
         instagramId: account.instagramId,
       },
       posts: media.map(toCommentPostItem),
-      comments: buildCommentList(
-        { instagramId: account.instagramId, username: account.username },
-        perPost,
-        { unanswered: query.unanswered }
-      ),
+      comments,
       errors,
       postsTruncated,
+      verificationPending: comments.filter((c) => c.verifying).length,
       canReply: canManageWorkspace(context.role),
     };
     return NextResponse.json({ success: true, data });
@@ -237,6 +267,9 @@ export async function POST(request: NextRequest) {
       parsed.data.commentId,
       parsed.data.text
     );
+    // Meta will not name this reply's author when it is read back in bulk, so
+    // record it as the account's now rather than looking it up later.
+    await recordOwnReply(account.id, result.id);
     return NextResponse.json({ success: true, data: { id: result.id } });
   } catch (error) {
     console.error("[Comments] Reply error:", error);

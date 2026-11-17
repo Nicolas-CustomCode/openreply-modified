@@ -109,6 +109,35 @@ describe("isOwnReply", () => {
 });
 
 describe("buildCommentList", () => {
+  it("uses the resolved reply ids and flags comments still being checked", () => {
+    const list = buildCommentList(
+      ACCOUNT,
+      [
+        {
+          postId: "p1",
+          comments: [
+            comment("1", "2026-11-17T10:00:00+0000", {
+              replies: { data: [{ id: "101" }] },
+            }),
+            comment("2", "2026-11-17T09:00:00+0000", {
+              replies: { data: [{ id: "201" }] },
+            }),
+          ],
+        },
+      ],
+      {
+        unanswered: true,
+        ownReplyIds: new Set(["101"]),
+        unverifiedCommentIds: new Set(["2"]),
+      }
+    );
+
+    // 1 is answered (dropped by the unanswered filter); 2 stays, flagged.
+    expect(list.map((c) => [c.id, c.answered, c.verifying])).toEqual([
+      ["2", false, true],
+    ]);
+  });
+
   it("marks a comment answered from the reply's username alone", () => {
     // What Meta was seen to return: replies with no `from` at all.
     const list = buildCommentList(

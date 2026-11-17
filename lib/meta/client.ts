@@ -434,6 +434,31 @@ export async function sendCommentReply(
   return handleResponse(response);
 }
 
+/**
+ * The author of one comment reply. Reading replies in bulk (nested under a
+ * comment, or via /{comment-id}/replies) returns them with no author at all;
+ * only this single-reply read carries `from` and `username`. Callers cache the
+ * answer — see lib/reply-authors.ts — since it costs one call per reply.
+ */
+export async function getCommentReplyAuthor(
+  accessToken: string,
+  replyId: string
+): Promise<{ id?: string; username?: string }> {
+  const url = new URL(`${instagramGraphBase()}/${replyId}`);
+  url.searchParams.set("fields", "id,from,username");
+  url.searchParams.set("access_token", accessToken);
+
+  const response = await fetch(url.toString());
+  const data = await handleResponse<{
+    username?: string;
+    from?: { id?: string; username?: string };
+  }>(response);
+  return {
+    id: data.from?.id,
+    username: data.username ?? data.from?.username,
+  };
+}
+
 export async function getMediaComments(
   accessToken: string,
   mediaId: string

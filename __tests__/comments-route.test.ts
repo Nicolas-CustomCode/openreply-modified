@@ -1,17 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const { mockContext, mockAccounts, mockMeta, mockOauth } = vi.hoisted(() => ({
-  mockContext: { getCurrentWorkspaceContext: vi.fn() },
-  mockAccounts: { getWorkspaceInstagramAccount: vi.fn() },
-  mockMeta: {
-    getUserMedia: vi.fn(),
-    getRecentUserMedia: vi.fn(),
-    getRecentMediaComments: vi.fn(),
-    sendCommentReply: vi.fn(),
-  },
-  mockOauth: { decryptToken: vi.fn() },
-}));
+const { mockContext, mockAccounts, mockMeta, mockOauth, mockReplyAuthors } =
+  vi.hoisted(() => ({
+    mockContext: { getCurrentWorkspaceContext: vi.fn() },
+    mockAccounts: { getWorkspaceInstagramAccount: vi.fn() },
+    mockMeta: {
+      getUserMedia: vi.fn(),
+      getRecentUserMedia: vi.fn(),
+      getRecentMediaComments: vi.fn(),
+      sendCommentReply: vi.fn(),
+    },
+    mockOauth: { decryptToken: vi.fn() },
+    mockReplyAuthors: {
+      resolveAnsweredComments: vi.fn(),
+      recordOwnReply: vi.fn(),
+    },
+  }));
 
 // workspace-access is loaded for real so the route is checked against the
 // actual role rule; only the session lookup is replaced. Its own imports are
@@ -25,6 +30,7 @@ vi.mock("@/lib/workspace-access", async (importOriginal) => ({
 }));
 vi.mock("@/lib/instagram-accounts", () => mockAccounts);
 vi.mock("@/lib/meta/oauth", () => mockOauth);
+vi.mock("@/lib/reply-authors", () => mockReplyAuthors);
 vi.mock("@/lib/meta/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/meta/client")>()),
   ...mockMeta,
@@ -61,6 +67,11 @@ beforeEach(() => {
   mockContext.getCurrentWorkspaceContext.mockResolvedValue(context("OWNER"));
   mockAccounts.getWorkspaceInstagramAccount.mockResolvedValue(ACCOUNT);
   mockOauth.decryptToken.mockReturnValue("token");
+  mockReplyAuthors.resolveAnsweredComments.mockResolvedValue({
+    ownReplyIds: new Set(),
+    unverifiedCommentIds: new Set(),
+    lookups: 0,
+  });
 });
 
 describe("GET /api/instagram/comments", () => {
@@ -141,6 +152,50 @@ describe("GET /api/instagram/comments", () => {
     expect(body.data.comments[0]).toMatchObject({ id: "c1", answered: true });
   });
 
+  it("marks answered and still-checking comments from the reply-author resolution", async () => {
+    mockMeta.getRecentUserMedia.mockResolvedValue({
+      media: [
+        { id: "m1", media_type: "IMAGE", timestamp: "2026-11-17T08:00:00+0000", comments_count: 3 },
+      ],
+      truncated: false,
+    });
+    // Replies with no author, the way Meta sends them in bulk.
+    mockMeta.getRecentMediaComments.mockResolvedValue([
+      { id: "c1", text: "a", timestamp: "2026-11-17T09:00:00+0000", from: { id: "f1" }, replies: { data: [{ id: "101" }] } },
+      { id: "c2", text: "b", timestamp: "2026-11-17T09:30:00+0000", from: { id: "f2" }, replies: { data: [{ id: "201" }] } },
+      { id: "c3", text: "c", timestamp: "2026-11-17T10:00:00+0000", from: { id: "f3" } },
+      { id: "own", text: "d", timestamp: "2026-11-17T10:30:00+0000", from: { id: ACCOUNT.instagramId } },
+    ]);
+    mockReplyAuthors.resolveAnsweredComments.mockResolvedValue({
+      ownReplyIds: new Set(["101"]),
+      unverifiedCommentIds: new Set(["c2"]),
+      lookups: 2,
+    });
+
+    const body = await (
+      await GET(get("?since=2026-11-16T12:00:00.000Z"))
+    ).json();
+
+    // The account's own comment is never sent for resolution; newest first.
+    const resolved = mockReplyAuthors.resolveAnsweredComments.mock.calls[0];
+    expect(resolved[0]).toEqual({
+      id: "acct_1",
+      instagramId: ACCOUNT.instagramId,
+      username: "brand",
+    });
+    expect(resolved[2].map((c: { id: string }) => c.id)).toEqual(["c3", "c2", "c1"]);
+    expect(resolved[3]).toEqual({ budget: 30 });
+
+    const byId = Object.fromEntries(
+      body.data.comments.map((c: { id: string }) => [c.id, c])
+    );
+    expect(byId.c1).toMatchObject({ answered: true, verifying: false });
+    expect(byId.c1.replies[0]).toMatchObject({ fromMe: true });
+    expect(byId.c2).toMatchObject({ answered: false, verifying: true });
+    expect(byId.c3).toMatchObject({ answered: false, verifying: false });
+    expect(body.data.verificationPending).toBe(1);
+  });
+
   it("lets a member read but tells the page they cannot reply", async () => {
     mockContext.getCurrentWorkspaceContext.mockResolvedValue(context("MEMBER"));
     mockMeta.getUserMedia.mockResolvedValue([]);
@@ -189,6 +244,11 @@ describe("POST /api/instagram/comments", () => {
       "token",
       "17900000000000001",
       "thanks!"
+    );
+    // Recorded as the account's reply, so it is never looked up later.
+    expect(mockReplyAuthors.recordOwnReply).toHaveBeenCalledWith(
+      "acct_1",
+      "17900000000000099"
     );
   });
 

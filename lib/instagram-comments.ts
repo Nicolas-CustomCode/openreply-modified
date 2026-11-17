@@ -30,6 +30,10 @@ export const MAX_HOURS = 168;
 // Per post. A viral post can carry thousands of comments; only the newest are
 // worth answering by hand.
 export const MAX_COMMENTS_PER_POST = 200;
+// GET /{reply-id} lookups one page load may spend telling who wrote replies.
+// Each reply is looked up once and cached, so a busy window settles over a few
+// loads and later loads cost almost nothing.
+export const REPLY_LOOKUPS_PER_LOAD = 30;
 // Instagram's own ceiling for a comment's text. Meta may still reject a shorter
 // reply for other reasons (too many hashtags or mentions, a link), and that
 // error is passed back to the caller as-is.
@@ -106,6 +110,11 @@ export interface CommentListItem {
   timestamp: string | null;
   /** True when the connected account has replied to this comment. */
   answered: boolean;
+  /**
+   * Not answered as far as is known yet, but some of its replies' authors are
+   * still being looked up (see lib/reply-authors.ts). Never set with answered.
+   */
+  verifying: boolean;
   replies: CommentReplyItem[];
 }
 
@@ -167,15 +176,27 @@ function timeOf(iso: string | null | undefined): number {
  * Turn each post's raw comments into one list, newest first.
  *
  * The account's own top-level comments are left out: they are not something to
- * reply to. A comment is `answered` when any of its replies comes from the
- * account, as decided by isOwnReply — the same test the polling reconciler
- * uses, so the page and the automation agree on what "answered" means.
+ * reply to. A comment is `answered` when any of its replies is the account's:
+ * either by isOwnReply, or because its id is in `ownReplyIds` — the replies
+ * resolveAnsweredComments (lib/reply-authors.ts) found to be the account's,
+ * which is the only way to tell now that Meta sends replies without authors.
+ * The polling reconciler uses the same resolution, so the page and the
+ * automation agree on what "answered" means.
+ *
+ * With `unanswered`, answered comments are left out; comments still being
+ * verified stay, flagged `verifying`.
  */
 export function buildCommentList(
   account: CommentAccount,
   perPost: { postId: string; comments: InstagramComment[] }[],
-  options: { unanswered: boolean }
+  options: {
+    unanswered: boolean;
+    ownReplyIds?: ReadonlySet<string>;
+    unverifiedCommentIds?: ReadonlySet<string>;
+  }
 ): CommentListItem[] {
+  const ownReplyIds = options.ownReplyIds ?? new Set<string>();
+  const unverified = options.unverifiedCommentIds ?? new Set<string>();
   const items: CommentListItem[] = [];
 
   for (const { postId, comments } of perPost) {
@@ -188,13 +209,14 @@ export function buildCommentList(
           id: reply.id,
           text: reply.text ?? "",
           username: reply.username ?? reply.from?.username ?? null,
-          fromMe: isOwnReply(reply, account),
+          fromMe: isOwnReply(reply, account) || ownReplyIds.has(reply.id),
           timestamp: reply.timestamp ?? null,
         }))
         .sort((a, b) => timeOf(a.timestamp) - timeOf(b.timestamp));
 
       const answered = replies.some((reply) => reply.fromMe);
       if (options.unanswered && answered) continue;
+      const verifying = !answered && unverified.has(comment.id);
 
       items.push({
         id: comment.id,
@@ -204,6 +226,7 @@ export function buildCommentList(
         userId,
         timestamp: comment.timestamp ?? null,
         answered,
+        verifying,
         replies,
       });
     }
