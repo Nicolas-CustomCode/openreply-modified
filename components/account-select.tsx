@@ -5,6 +5,8 @@ export interface AccountOption {
   username: string;
   instagramId: string;
   name?: string | null;
+  /** Set for an account that was disconnected but whose history is kept. */
+  disconnectedAt?: string | null;
 }
 
 interface AccountSelectProps {
@@ -36,6 +38,7 @@ export default function AccountSelect({
         {accounts.map((account) => (
           <option key={account.id} value={account.id}>
             @{account.username}
+            {account.disconnectedAt ? " (disconnected)" : ""}
           </option>
         ))}
       </select>

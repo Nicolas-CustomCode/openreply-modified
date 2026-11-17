@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
       },
     }),
     prisma.instagramAccount.findFirst({
-      where: { workspaceId },
+      where: { workspaceId, disconnectedAt: null },
       orderBy: { connectedAt: "desc" },
       select: {
         id: true,
@@ -69,9 +69,12 @@ export async function GET(request: NextRequest) {
         webhookSubscribed: true,
       },
     }),
+    // Disconnected accounts are included, flagged by disconnectedAt: their
+    // campaigns, logs and stats are still there to look at. Pages that act
+    // through an account (creating a campaign, importing) filter them out.
     prisma.instagramAccount.findMany({
       where: { workspaceId },
-      orderBy: { connectedAt: "desc" },
+      orderBy: [{ disconnectedAt: { sort: "desc", nulls: "first" } }, { connectedAt: "desc" }],
       select: {
         id: true,
         username: true,
@@ -79,6 +82,7 @@ export async function GET(request: NextRequest) {
         name: true,
         tokenExpiresAt: true,
         webhookSubscribed: true,
+        disconnectedAt: true,
       },
     }),
     prisma.automation.count({ where: { workspaceId, ...accountFilter } }),

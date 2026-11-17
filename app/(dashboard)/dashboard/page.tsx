@@ -83,7 +83,8 @@ export default function DashboardPage() {
 
   const maxDM = Math.max(...(stats?.dailyDMs.map((d) => d.count) ?? [1]), 1);
 
-  const connectedCount = stats?.instagramAccounts.length ?? 0;
+  const connectedCount =
+    stats?.instagramAccounts.filter((a) => !a.disconnectedAt).length ?? 0;
 
   return (
     <div className="space-y-8">

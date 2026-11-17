@@ -210,8 +210,10 @@ export async function GET(request: NextRequest) {
       }
     );
 
+    // The overview reads live from Instagram, so only connected accounts can be
+    // picked.
     const accounts = await prisma.instagramAccount.findMany({
-      where: { workspaceId },
+      where: { workspaceId, disconnectedAt: null },
       orderBy: { connectedAt: "desc" },
       select: { id: true, username: true },
     });

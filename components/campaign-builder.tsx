@@ -231,14 +231,18 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       .then((r) => r.json())
       .then((payload) => {
         if (!payload.success) return;
-        const next: AccountOption[] = payload.data.instagramAccounts ?? [];
+        const all: AccountOption[] = payload.data.instagramAccounts ?? [];
+        // A new campaign needs a connected account. When editing, the
+        // campaign's own account is kept even if disconnected, for the preview.
+        const next =
+          mode === "new" ? all.filter((a) => !a.disconnectedAt) : all;
         setAccounts(next);
         setSelectedAccountId(
           (prev) => prev || payload.data.selectedInstagramAccountId || next[0]?.id || ""
         );
       })
       .catch(() => setAccounts([]));
-  }, []);
+  }, [mode]);
 
   // Prefill when editing.
   useEffect(() => {

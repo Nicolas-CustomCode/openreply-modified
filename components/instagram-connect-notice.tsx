@@ -33,7 +33,13 @@ const MESSAGES: Record<string, { tone: Tone; title: string; detail: string }> = 
     tone: "warning",
     title: "Account already connected",
     detail:
-      "That Instagram account is connected to another workspace. Disconnect it there first, or connect a different account.",
+      "That Instagram account is connected to another workspace. Disconnect it and remove it permanently there first, or connect a different account.",
+  },
+  held_by_other_workspace: {
+    tone: "warning",
+    title: "Account belongs to another workspace",
+    detail:
+      "That Instagram account was disconnected from another workspace, which still keeps its campaigns and history. Remove it permanently there first, or connect a different account.",
   },
 };
 

@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db/client";
+import { disconnectInstagramAccounts } from "@/lib/instagram-accounts";
 import {
   canManageWorkspace,
   getCurrentWorkspaceContext,
 } from "@/lib/workspace-access";
 
+/**
+ * Disconnect an Instagram account (or, without an id, every account of the
+ * workspace). Nothing is deleted: the token is wiped and the account's
+ * campaigns are paused, and reconnecting the same account brings its
+ * campaigns and history back. Permanent removal is DELETE /api/instagram/accounts.
+ */
 export async function POST(request: NextRequest) {
   const context = await getCurrentWorkspaceContext();
   if (!context) {
@@ -25,12 +31,10 @@ export async function POST(request: NextRequest) {
   const instagramAccountId =
     typeof body.instagramAccountId === "string" ? body.instagramAccountId : null;
 
-  await prisma.instagramAccount.deleteMany({
-    where: {
-      workspaceId: context.workspaceId,
-      ...(instagramAccountId ? { id: instagramAccountId } : {}),
-    },
-  });
+  const disconnected = await disconnectInstagramAccounts(
+    context.workspaceId,
+    instagramAccountId
+  );
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, data: { disconnected } });
 }

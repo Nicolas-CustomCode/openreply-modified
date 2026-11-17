@@ -136,6 +136,11 @@ model InstagramAccount {
   webhookSubscribed Boolean  @default(false)
   connectedAt       DateTime @default(now())
   updatedAt         DateTime @updatedAt
+  /// Set when the account is disconnected. The row is kept (with its token
+  /// wiped and its campaigns paused) so campaigns, logs and history survive
+  /// and come back when the same account is connected again. Deleting the
+  /// row is a separate, explicit "remove permanently".
+  disconnectedAt    DateTime?
 
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   automations Automation[]

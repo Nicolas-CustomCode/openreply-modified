@@ -215,7 +215,7 @@ The fix for your own accounts is the same two-part dance as Step 6, once per acc
 
 You do not have to do anything here; OpenReply handles it. It is worth understanding because it is invisible when it goes wrong.
 
-Meta's `/me` returns two IDs. The `id` field is app-scoped. The `user_id` field is the Instagram professional account ID. Webhooks put `user_id` in `entry.id`, and the messaging API keys off `user_id` too. OpenReply stores `user_id`, so a fresh connection matches correctly. If you upgraded from a very old build and an account was stored with the wrong ID, disconnect and reconnect it once.
+Meta's `/me` returns two IDs. The `id` field is app-scoped. The `user_id` field is the Instagram professional account ID. Webhooks put `user_id` in `entry.id`, and the messaging API keys off `user_id` too. OpenReply stores `user_id`, so a fresh connection matches correctly. If you upgraded from a very old build and an account was stored with the wrong ID, disconnect it, select Remove permanently on it in Settings, and connect it again. Disconnecting alone keeps the old record, so the reconnect would land on a new one.
 
 ## Test it end to end
 

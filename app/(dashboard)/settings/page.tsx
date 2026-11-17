@@ -74,17 +74,48 @@ export default function SettingsPage() {
     if (payload.success) setMembersData(payload.data);
   }
 
-  async function disconnectInstagram(instagramAccountId: string) {
-    if (!confirm("Disconnect Instagram? Campaigns for this account will stop sending DMs.")) {
+  async function disconnectInstagram(account: { id: string; username: string }) {
+    if (
+      !confirm(
+        `Disconnect @${account.username}? Its campaigns will be paused and stop sending DMs. Campaigns, logs and history are kept and come back if you reconnect this account.`
+      )
+    ) {
       return;
     }
 
-    setBusy(`disconnect:${instagramAccountId}`);
+    setBusy(`disconnect:${account.id}`);
     await fetch("/api/instagram/disconnect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ instagramAccountId }),
+      body: JSON.stringify({ instagramAccountId: account.id }),
     });
+    window.location.reload();
+  }
+
+  async function removeInstagramPermanently(account: {
+    id: string;
+    username: string;
+  }) {
+    const typed = prompt(
+      `This permanently deletes @${account.username} and all of its campaigns, DM logs, tracked links, clicks and follower history. This cannot be undone.\n\nType the username to confirm:`
+    );
+    if (typed === null) return;
+
+    setBusy(`remove:${account.id}`);
+    const res = await fetch("/api/instagram/accounts", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instagramAccountId: account.id,
+        confirmUsername: typed,
+      }),
+    });
+    const payload = await res.json().catch(() => null);
+    if (!res.ok || !payload?.success) {
+      setBusy(null);
+      alert(payload?.error ?? "Could not remove the account.");
+      return;
+    }
     window.location.reload();
   }
 
@@ -122,7 +153,9 @@ export default function SettingsPage() {
     return <div className="panel rounded p-8 h-64" />;
   }
 
-  const accounts = data?.instagramAccounts ?? [];
+  const allAccounts = data?.instagramAccounts ?? [];
+  const accounts = allAccounts.filter((a) => !a.disconnectedAt);
+  const disconnectedAccounts = allAccounts.filter((a) => a.disconnectedAt);
   const canManageMembers =
     membersData?.currentUserRole === "OWNER" ||
     membersData?.currentUserRole === "ADMIN";
@@ -195,7 +228,7 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => disconnectInstagram(account.id)}
+                  onClick={() => disconnectInstagram(account)}
                   disabled={busy === `disconnect:${account.id}`}
                   className="inline-flex items-center justify-center rounded border border-error/20 px-4 py-2 text-sm font-medium text-error transition-all hover:border-error/40 hover:bg-error/10 disabled:opacity-50"
                 >
@@ -206,6 +239,56 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
+
+          {disconnectedAccounts.length > 0 && (
+            <div className="space-y-3 border-t border-border pt-4">
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  Disconnected accounts
+                </p>
+                <p className="text-xs text-muted mt-0.5">
+                  Their campaigns are paused and their history is kept.
+                  Reconnect by logging in as the same Instagram account; the
+                  campaigns come back paused.
+                </p>
+              </div>
+              {disconnectedAccounts.map((account) => (
+                <div
+                  key={account.id}
+                  className="flex flex-col gap-3 rounded border border-border p-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">
+                      @{account.username}
+                    </p>
+                    <p className="mt-1 text-xs text-warning">
+                      Disconnected
+                      {account.disconnectedAt
+                        ? ` on ${new Date(account.disconnectedAt).toLocaleDateString()}`
+                        : ""}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href="/api/instagram/connect"
+                      className="inline-flex items-center justify-center rounded border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover"
+                    >
+                      Reconnect
+                    </a>
+                    <button
+                      onClick={() => removeInstagramPermanently(account)}
+                      disabled={busy === `remove:${account.id}`}
+                      className="inline-flex items-center justify-center rounded border border-error/20 px-4 py-2 text-sm font-medium text-error transition-all hover:border-error/40 hover:bg-error/10 disabled:opacity-50"
+                    >
+                      {busy === `remove:${account.id}`
+                        ? "Removing..."
+                        : "Remove permanently"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="mt-6 pt-4 border-t border-border flex gap-3">

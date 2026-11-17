@@ -30,7 +30,10 @@ export default function ImportCampaignsPage() {
       .then((res) => res.json())
       .then((payload) => {
         if (payload.success) {
-          const next = payload.data.instagramAccounts ?? [];
+          // Imported campaigns need a connected account.
+          const next = (payload.data.instagramAccounts ?? []).filter(
+            (a: { disconnectedAt?: string | null }) => !a.disconnectedAt
+          );
           setAccounts(next);
           setSelectedAccountId(next[0]?.id ?? "");
         }

@@ -38,6 +38,7 @@ interface Campaign {
   instagramAccount: {
     username: string;
     instagramId: string;
+    disconnectedAt: string | null;
   };
   reportShareSlug: string | null;
   reportShareEnabled: boolean;
@@ -199,11 +200,18 @@ export default function CampaignsPage() {
 
   async function toggleActive(id: string, isActive: boolean) {
     try {
-      await fetch(`/api/automations?id=${id}`, {
+      const res = await fetch(`/api/automations?id=${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: !isActive }),
       });
+      // Only flip the switch once the server agrees — turning on a campaign
+      // whose account is disconnected is refused.
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.success) {
+        window.alert(payload?.error ?? "Could not update the campaign.");
+        return;
+      }
       setAutomations((prev) =>
         prev.map((a) => (a.id === id ? { ...a, isActive: !isActive } : a))
       );
@@ -455,6 +463,11 @@ export default function CampaignsPage() {
                   >
                     {auto.isActive ? "Active" : "Paused"}
                   </span>
+                  {auto.instagramAccount.disconnectedAt && (
+                    <span className="shrink-0 rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">
+                      Account disconnected
+                    </span>
+                  )}
                   {auto.pendingNextReel && (
                     <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-warning">
                       Waiting for next reel

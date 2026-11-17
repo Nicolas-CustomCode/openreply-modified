@@ -57,6 +57,39 @@ describe("agency workspace helpers", () => {
     });
   });
 
+  it("says when another workspace holds the account disconnected", async () => {
+    // A disconnected account still carries its workspace's campaigns, so it
+    // cannot be pulled into a different workspace until it is removed there.
+    mockPrisma.instagramAccount.findUnique.mockResolvedValue({
+      workspaceId: "workspace_other",
+      disconnectedAt: new Date("2026-11-01T00:00:00Z"),
+    });
+
+    await expect(
+      canConnectInstagramAccount({
+        workspaceId: "workspace_123",
+        instagramId: "ig_123",
+      })
+    ).resolves.toMatchObject({
+      allowed: false,
+      reason: "held_by_other_workspace",
+    });
+  });
+
+  it("allows reconnecting the workspace's own disconnected account", async () => {
+    mockPrisma.instagramAccount.findUnique.mockResolvedValue({
+      workspaceId: "workspace_123",
+      disconnectedAt: new Date("2026-11-01T00:00:00Z"),
+    });
+
+    await expect(
+      canConnectInstagramAccount({
+        workspaceId: "workspace_123",
+        instagramId: "ig_123",
+      })
+    ).resolves.toMatchObject({ allowed: true, reason: null });
+  });
+
   it("allows connecting additional accounts with no plan limit", async () => {
     mockPrisma.instagramAccount.findUnique.mockResolvedValue(null);
 
@@ -68,17 +101,17 @@ describe("agency workspace helpers", () => {
     ).resolves.toMatchObject({ allowed: true, reason: null });
   });
 
-  it("selects a requested workspace account or falls back to the latest account", async () => {
+  it("selects a requested connected account or falls back to the latest one", async () => {
     mockPrisma.instagramAccount.findFirst.mockResolvedValue({ id: "account_1" });
 
     await getWorkspaceInstagramAccount("workspace_123", "account_1");
     expect(mockPrisma.instagramAccount.findFirst).toHaveBeenCalledWith({
-      where: { id: "account_1", workspaceId: "workspace_123" },
+      where: { id: "account_1", workspaceId: "workspace_123", disconnectedAt: null },
     });
 
     await getWorkspaceInstagramAccount("workspace_123", "all");
     expect(mockPrisma.instagramAccount.findFirst).toHaveBeenLastCalledWith({
-      where: { workspaceId: "workspace_123" },
+      where: { workspaceId: "workspace_123", disconnectedAt: null },
       orderBy: { connectedAt: "desc" },
     });
   });

@@ -140,7 +140,7 @@ export async function GET(request: NextRequest) {
     where: { workspaceId, ...accountFilter },
     include: {
       instagramAccount: {
-        select: { username: true, instagramId: true },
+        select: { username: true, instagramId: true, disconnectedAt: true },
       },
       _count: {
         select: { dmLogs: true },
@@ -317,12 +317,17 @@ export async function POST(request: NextRequest) {
       where: { id: workspaceId },
       select: { id: true },
     }),
+    // Only a connected account can take a new campaign.
     requestedInstagramAccountId
       ? prisma.instagramAccount.findFirst({
-          where: { id: requestedInstagramAccountId, workspaceId },
+          where: {
+            id: requestedInstagramAccountId,
+            workspaceId,
+            disconnectedAt: null,
+          },
         })
       : prisma.instagramAccount.findFirst({
-          where: { workspaceId },
+          where: { workspaceId, disconnectedAt: null },
           orderBy: { connectedAt: "desc" },
         }),
   ]);
@@ -487,12 +492,26 @@ export async function PATCH(request: NextRequest) {
 
   const existing = await prisma.automation.findFirst({
     where: { id: automationId, workspaceId },
+    include: { instagramAccount: { select: { disconnectedAt: true } } },
   });
 
   if (!existing) {
     return NextResponse.json(
       { success: false, error: "Campaign not found" },
       { status: 404 }
+    );
+  }
+
+  // A disconnected account has no token, so a live campaign on it would only
+  // log a failure for every matching comment. It can still be edited.
+  if (parsed.data.isActive === true && existing.instagramAccount.disconnectedAt) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          "This campaign's Instagram account is disconnected. Reconnect it in Settings before turning the campaign on.",
+      },
+      { status: 409 }
     );
   }
 

@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
 
     if (!connection.allowed) {
       return NextResponse.redirect(
-        `${baseUrl}/settings?instagram=already_connected`
+        `${baseUrl}/settings?instagram=${connection.reason}`
       );
     }
 
@@ -94,6 +94,9 @@ export async function GET(request: NextRequest) {
         tokenExpiresAt,
         webhookSubscribed,
       },
+      // Reconnecting a disconnected account lands here: the same row comes
+      // back with its campaigns and history. Its campaigns were paused on
+      // disconnect and stay paused until someone turns them back on.
       update: {
         workspaceId: state.workspaceId,
         username: userInfo.username,
@@ -101,6 +104,7 @@ export async function GET(request: NextRequest) {
         accessToken: encryptedToken,
         tokenExpiresAt,
         webhookSubscribed,
+        disconnectedAt: null,
       },
     });
 
