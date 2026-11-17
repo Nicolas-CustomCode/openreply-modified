@@ -51,6 +51,30 @@ export function renderMessageWithoutLink({
     .trim();
 }
 
+/**
+ * Link tracking is on unless explicitly switched off, matching
+ * WORKER_SCHEDULES_ENABLED. Read per call rather than into a module constant so
+ * tests can toggle it and so the value follows the process environment.
+ */
+export function isLinkTrackingEnabled() {
+  return process.env.LINK_TRACKING_ENABLED !== "false";
+}
+
+/**
+ * The URL a recipient actually gets. With tracking off it is the destination
+ * itself, unmasked — the TrackedLink row and its slug are still created, so
+ * turning tracking back on is a config change and nothing has to be migrated.
+ * Links already sent keep resolving through /r/[slug] either way.
+ */
+export function resolveLinkUrl(
+  link: { slug: string; destinationUrl: string },
+  baseUrl?: string
+) {
+  return isLinkTrackingEnabled()
+    ? buildTrackedUrl(link.slug, baseUrl)
+    : link.destinationUrl;
+}
+
 export function buildTrackedUrl(slug: string, baseUrl?: string) {
   const resolvedBaseUrl =
     baseUrl ??
@@ -77,7 +101,7 @@ export function renderMessageWithTracking({
 
   if (!primaryLink) return rendered;
 
-  const trackedUrl = buildTrackedUrl(primaryLink.slug, baseUrl);
+  const trackedUrl = resolveLinkUrl(primaryLink, baseUrl);
 
   if (/\{link\}/i.test(rendered)) {
     return rendered.replace(/\{link\}/gi, trackedUrl);

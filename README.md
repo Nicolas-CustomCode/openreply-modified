@@ -50,13 +50,15 @@ The web app receives the webhook and serves the dashboard. A separate worker pro
 
 ## Quick start
 
-You need a few free accounts before anything works: a Meta developer app, and somewhere to host (Vercel for the web app, Railway for the worker plus Postgres and Redis). The Instagram account you connect has to be a Business or Creator account, not a personal one.
+You need a few free accounts before anything works: a Meta developer app, and somewhere to host the web app, the worker, Postgres, and Redis. The Instagram account you connect has to be a Business or Creator account, not a personal one.
 
 The honest version: the code deploys in minutes, but the Meta app setup is the part that takes real time. Read [docs/setup.md](docs/setup.md) before you start. It is the single setup guide, covering hosting, your domain, the environment, and every Meta wrong turn so you do not have to find them yourself.
 
-### Deploy the web app
+### Deploy it
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/diwenne/openreply)
+- [On your own VPS, with git](docs/deploy-vps.md) — clone, build on the server, two systemd services behind Caddy
+- [On Easypanel](docs/deploy-easypanel.md) — one Docker image, two services on your own VPS
+- [On Dokploy](docs/deploy-dokploy.md) — managed platform, builds from the repo
 
 ### Run it locally
 
@@ -91,7 +93,7 @@ If you use Claude Code, Cursor, or a similar tool, the Meta setup is a lot faste
 - Tailwind CSS for the interface
 - The official Instagram API with Instagram Login
 
-For the complete stack — application libraries, the two runtime processes, and the free services this runs on (Vercel, Neon, Redis Cloud, an Oracle Cloud always-free VM for the worker, Meta) — see [docs/stack.md](docs/stack.md).
+For the complete stack — application libraries, the two runtime processes, and the free services this runs on (Neon, Redis Cloud, an Oracle Cloud always-free VM for the worker, Meta) — see [docs/stack.md](docs/stack.md).
 
 ## Contributing
 

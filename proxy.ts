@@ -17,22 +17,28 @@ function hasSessionCookie(request: NextRequest): boolean {
   );
 }
 
+/**
+ * Optimistic only: this can see that a session cookie exists, never that it is
+ * still valid. So it may send someone to the login page who turns out to be
+ * signed in, but it must never do the reverse and wave someone through.
+ *
+ * Sending a cookie-holder from /login to /dashboard used to live here, and it
+ * deadlocked against the real check. A cookie that no longer decodes — expired,
+ * or issued before the session strategy changed — left proxy bouncing the
+ * browser to /dashboard while the dashboard layout bounced it back to /login,
+ * forever. The authoritative version of that redirect is in app/login/page.tsx,
+ * where auth() can tell a live session from a dead cookie.
+ */
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isProtected = PROTECTED_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
-  const isLogin = pathname === "/login";
-  const isAuthenticated = hasSessionCookie(request);
 
-  if (isProtected && !isAuthenticated) {
+  if (isProtected && !hasSessionCookie(request)) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
-  }
-
-  if (isLogin && isAuthenticated) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
   return NextResponse.next();
@@ -45,6 +51,5 @@ export const config = {
     "/logs/:path*",
     "/settings/:path*",
     "/comments/:path*",
-    "/login",
   ],
 };

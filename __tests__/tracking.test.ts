@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   calculateCtr,
   normalizeTopKeywords,
@@ -9,6 +9,7 @@ import {
   extractFirstUrl,
   renderMessageWithTracking,
   replaceUrlWithTrackedPlaceholder,
+  resolveLinkUrl,
 } from "../lib/tracking/message";
 
 describe("tracked link messages", () => {
@@ -76,6 +77,61 @@ describe("tracked link messages", () => {
     expect(buildTrackedUrl("abc123", "https://manychat-alternative.com/")).toBe(
       "https://manychat-alternative.com/r/abc123"
     );
+  });
+});
+
+describe("LINK_TRACKING_ENABLED", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const link = { slug: "abc123", destinationUrl: "https://example.com/guide" };
+
+  it("masks through /r/<slug> by default", () => {
+    expect(resolveLinkUrl(link, "https://manychat-alternative.com")).toBe(
+      "https://manychat-alternative.com/r/abc123"
+    );
+  });
+
+  it("sends the destination unmasked when switched off", () => {
+    vi.stubEnv("LINK_TRACKING_ENABLED", "false");
+    expect(resolveLinkUrl(link, "https://manychat-alternative.com")).toBe(
+      "https://example.com/guide"
+    );
+  });
+
+  // Only the exact string "false" disables it, so an empty or absent value
+  // cannot silently drop tracking.
+  it("stays on for any other value", () => {
+    vi.stubEnv("LINK_TRACKING_ENABLED", "");
+    expect(resolveLinkUrl(link, "https://manychat-alternative.com")).toBe(
+      "https://manychat-alternative.com/r/abc123"
+    );
+  });
+
+  it("renders the message with the raw destination when switched off", () => {
+    vi.stubEnv("LINK_TRACKING_ENABLED", "false");
+    expect(
+      renderMessageWithTracking({
+        message: "Hey {username}, grab it here: {link}",
+        commenterName: "Maya",
+        trackedLinks: [link],
+        baseUrl: "https://manychat-alternative.com",
+      })
+    ).toBe("Hey Maya, grab it here: https://example.com/guide");
+  });
+
+  // The message may hold the raw URL instead of the {link} token. That branch
+  // replaces the URL with itself here, which must not corrupt the text.
+  it("leaves an inline raw URL untouched when switched off", () => {
+    vi.stubEnv("LINK_TRACKING_ENABLED", "false");
+    expect(
+      renderMessageWithTracking({
+        message: "Link: https://example.com/guide",
+        trackedLinks: [link],
+        baseUrl: "https://manychat-alternative.com",
+      })
+    ).toBe("Link: https://example.com/guide");
   });
 });
 

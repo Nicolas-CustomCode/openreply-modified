@@ -47,11 +47,15 @@ export default function PrivacyPage() {
 
       <section>
         <h2 className="text-xl font-bold text-white">Subprocessors</h2>
+        {/*
+          Name the providers this instance actually runs on. OpenReply is
+          self-hosted, so only the operator knows them, and a privacy policy
+          listing the wrong ones is worse than one listing none.
+        */}
         <p className="mt-3">
-          The production service may use hosting, database, Redis queue, and
-          observability providers such as Vercel, Railway, PostgreSQL, and
-          Redis. These providers process data only as needed to run the
-          service.
+          This instance runs on infrastructure chosen by its operator, which may
+          include hosting, database, queue, and observability providers. They
+          process data only as needed to run the service.
         </p>
       </section>
 
